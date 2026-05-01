@@ -14,6 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import wave
+import webbrowser
 import winsound
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,6 +38,11 @@ CATALOG_URL = (
 HF_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
 REMOTE_TIMEOUT_SECONDS = 15
 REMOTE_RETRY_COUNT = 3
+APP_WINDOW_TITLE = "GetGoingFast.pro - Piper 1 Model Manager"
+APP_DIALOG_TITLE = "GetGoingFast.pro"
+APP_HEADER_TITLE = "GetGoingFast.pro : Piper 1 Model Manager"
+APP_HEADER_LINK_TEXT = "youtube.com/@cognibuild"
+APP_HEADER_LINK_URL = "https://www.youtube.com/@cognibuild"
 
 
 def ensure_directories() -> None:
@@ -466,7 +472,7 @@ class PiperManagerApp:
     def __init__(self, root: Tk) -> None:
         ensure_directories()
         self.root = root
-        self.root.title("Piper1 Model Manager")
+        self.root.title(APP_WINDOW_TITLE)
         self.root.geometry("1420x980")
         self.root.minsize(1180, 820)
 
@@ -545,10 +551,30 @@ class PiperManagerApp:
     def _build_ui(self) -> None:
         self.root.columnconfigure(0, weight=3)
         self.root.columnconfigure(1, weight=2)
-        self.root.rowconfigure(1, weight=1)
+        self.root.rowconfigure(2, weight=1)
+
+        brand_frame = ttk.Frame(self.root, padding=(12, 12, 12, 4))
+        brand_frame.grid(row=0, column=0, columnspan=2, sticky="ew")
+        brand_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            brand_frame,
+            text=APP_HEADER_TITLE,
+            font=("Segoe UI", 16, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+        link_label = ttk.Label(
+            brand_frame,
+            text=APP_HEADER_LINK_TEXT,
+            foreground="#0b57d0",
+            cursor="hand2",
+        )
+        link_label.grid(row=0, column=1, sticky="e", padx=(12, 0))
+        link_label.bind(
+            "<Button-1>",
+            lambda _event: webbrowser.open(APP_HEADER_LINK_URL),
+        )
 
         toolbar = ttk.Frame(self.root, padding=12)
-        toolbar.grid(row=0, column=0, columnspan=2, sticky="ew")
+        toolbar.grid(row=1, column=0, columnspan=2, sticky="ew")
         toolbar.columnconfigure(6, weight=1)
 
         ttk.Button(
@@ -576,7 +602,7 @@ class PiperManagerApp:
         )
 
         left_panel = ttk.Frame(self.root, padding=(12, 0, 6, 12))
-        left_panel.grid(row=1, column=0, sticky="nsew")
+        left_panel.grid(row=2, column=0, sticky="nsew")
         left_panel.columnconfigure(0, weight=1)
         left_panel.rowconfigure(1, weight=1)
 
@@ -646,7 +672,7 @@ class PiperManagerApp:
         self.voice_tree.configure(yscrollcommand=tree_scroll.set)
 
         right_panel = ttk.Frame(self.root, padding=(6, 0, 12, 12))
-        right_panel.grid(row=1, column=1, sticky="nsew")
+        right_panel.grid(row=2, column=1, sticky="nsew")
         right_panel.columnconfigure(0, weight=1)
         right_panel.rowconfigure(3, weight=1)
 
@@ -850,7 +876,7 @@ class PiperManagerApp:
             if event_type == "error":
                 _, label, message, trace = event
                 self.set_status(f"{label} failed")
-                messagebox.showerror("Piper1 Manager", f"{message}\n\n{trace}")
+                messagebox.showerror(APP_DIALOG_TITLE, f"{message}\n\n{trace}")
             elif event_type == "result":
                 _, label, callback, result = event
                 if callback is not None:
@@ -1011,7 +1037,7 @@ class PiperManagerApp:
         voice = self.catalog[self.selected_voice_key]
         if not voice_is_installed(voice):
             if not messagebox.askyesno(
-                "Piper1 Manager",
+                APP_DIALOG_TITLE,
                 "That voice is not installed yet. Download it now?",
             ):
                 return
@@ -1108,11 +1134,11 @@ class PiperManagerApp:
         voice_key = self.selected_voice_key
         voice = self.catalog[voice_key]
         if not voice_is_installed(voice):
-            messagebox.showinfo("Piper1 Manager", "That voice is not installed.")
+            messagebox.showinfo(APP_DIALOG_TITLE, "That voice is not installed.")
             return
 
         if not messagebox.askyesno(
-            "Piper1 Manager",
+            APP_DIALOG_TITLE,
             f"Delete local files for {voice_key}?",
         ):
             return
@@ -1173,7 +1199,7 @@ class PiperManagerApp:
     def preview_audio(self) -> None:
         voice_key = self.active_voice_var.get().strip()
         if not voice_key:
-            messagebox.showinfo("Piper1 Manager", "Choose an active installed voice first.")
+            messagebox.showinfo(APP_DIALOG_TITLE, "Choose an active installed voice first.")
             return
 
         text = self.current_text()
@@ -1183,7 +1209,7 @@ class PiperManagerApp:
     def save_audio_as(self) -> None:
         voice_key = self.active_voice_var.get().strip()
         if not voice_key:
-            messagebox.showinfo("Piper1 Manager", "Choose an active installed voice first.")
+            messagebox.showinfo(APP_DIALOG_TITLE, "Choose an active installed voice first.")
             return
 
         suggested_name = f"{voice_key}_{int(time.time())}.wav"
@@ -1242,7 +1268,7 @@ class PiperManagerApp:
                 self.set_status(f"Preview ready: {result_path.name}")
             else:
                 self.set_status(f"Saved WAV to {result_path}")
-                messagebox.showinfo("Piper1 Manager", f"Saved WAV to:\n{result_path}")
+                messagebox.showinfo(APP_DIALOG_TITLE, f"Saved WAV to:\n{result_path}")
 
         self.run_background(f"Synthesizing with {voice_key}...", task, on_complete)
 
@@ -1342,7 +1368,7 @@ class PiperManagerApp:
 
             self.api_server.start(host, port)
         except Exception as exc:
-            messagebox.showerror("Piper1 Manager", str(exc))
+            messagebox.showerror(APP_DIALOG_TITLE, str(exc))
             return
 
         self.api_port_var.set(str(self.api_server.port))
@@ -1370,7 +1396,7 @@ class PiperManagerApp:
 
     def copy_api_url(self) -> None:
         if not self.api_server.is_running():
-            messagebox.showinfo("Piper1 Manager", "Start the API first.")
+            messagebox.showinfo(APP_DIALOG_TITLE, "Start the API first.")
             return
 
         api_url = f"http://{self.api_server.host}:{self.api_server.port}"
