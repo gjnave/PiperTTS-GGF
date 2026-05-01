@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import http.client
+import hashlib
 import io
 import json
 import os
@@ -201,14 +202,46 @@ def voice_file_map(voice: dict) -> list[tuple[str, Path, int]]:
     return downloads
 
 
+def file_md5(path: Path) -> str:
+    digest = hashlib.md5()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def local_file_matches_metadata(local_path: Path, file_info: dict) -> bool:
+    if not local_path.exists() or not local_path.is_file():
+        return False
+
+    expected_size = int(file_info.get("size_bytes", 0) or 0)
+    actual_size = local_path.stat().st_size
+    if expected_size > 0 and actual_size != expected_size:
+        return False
+
+    expected_md5 = str(file_info.get("md5_digest", "")).strip().lower()
+    if expected_md5:
+        try:
+            actual_md5 = file_md5(local_path).lower()
+        except OSError:
+            return False
+        if actual_md5 != expected_md5:
+            return False
+
+    return actual_size > 0
+
+
 def voice_is_installed(voice: dict) -> bool:
-    downloads = voice_file_map(voice)
-    if not downloads:
+    files = voice.get("files", {})
+    if not files:
         return False
 
     return all(
-        local_path.exists() and local_path.stat().st_size > 0
-        for _, local_path, _ in downloads
+        local_file_matches_metadata(MODELS_DIR / Path(remote_path).name, file_info)
+        for remote_path, file_info in files.items()
     )
 
 
@@ -1085,22 +1118,42 @@ class PiperManagerApp:
         voice = self.catalog[voice_key]
 
         def task() -> str:
-            for remote_path, local_path, _size in voice_file_map(voice):
-                if local_path.exists() and local_path.stat().st_size > 0 and not force:
+            for remote_path, local_path, expected_size in voice_file_map(voice):
+                file_info = voice["files"][remote_path]
+                if local_file_matches_metadata(local_path, file_info) and not force:
                     continue
 
                 local_path.parent.mkdir(parents=True, exist_ok=True)
                 url = remote_file_url(remote_path)
+                temp_path = local_path.with_suffix(local_path.suffix + ".part")
                 try:
+                    if temp_path.exists():
+                        temp_path.unlink()
                     with urllib.request.urlopen(
                         url, timeout=REMOTE_TIMEOUT_SECONDS
-                    ) as response, open(local_path, "wb") as output_file:
+                    ) as response, open(temp_path, "wb") as output_file:
                         while True:
                             chunk = response.read(1024 * 1024)
                             if not chunk:
                                 break
                             output_file.write(chunk)
+                    actual_size = temp_path.stat().st_size
+                    if expected_size > 0 and actual_size != expected_size:
+                        raise RuntimeError(
+                            f"Downloaded {Path(remote_path).name} with the wrong size "
+                            f"({actual_size} bytes, expected {expected_size})."
+                        )
+                    expected_md5 = str(file_info.get("md5_digest", "")).strip().lower()
+                    if expected_md5:
+                        actual_md5 = file_md5(temp_path).lower()
+                        if actual_md5 != expected_md5:
+                            raise RuntimeError(
+                                f"Downloaded {Path(remote_path).name} but the checksum did not match."
+                            )
+                    os.replace(temp_path, local_path)
                 except urllib.error.HTTPError as exc:
+                    if temp_path.exists():
+                        temp_path.unlink()
                     update_voice_availability_cache(
                         voice_key,
                         voice,
@@ -1111,6 +1164,12 @@ class PiperManagerApp:
                         f"The upstream Piper catalog entry for {voice_key} is broken ({exc.code} for {Path(remote_path).name}). "
                         "The app has hidden it from the catalog for future refreshes."
                     ) from exc
+                except Exception:
+                    if temp_path.exists():
+                        temp_path.unlink()
+                    if local_path.exists() and not local_file_matches_metadata(local_path, file_info):
+                        local_path.unlink()
+                    raise
 
             update_voice_availability_cache(voice_key, voice, available=True)
             return voice_key
