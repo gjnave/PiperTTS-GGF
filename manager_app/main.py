@@ -39,6 +39,8 @@ CATALOG_URL = (
 HF_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
 REMOTE_TIMEOUT_SECONDS = 15
 REMOTE_RETRY_COUNT = 3
+DOWNLOAD_TIMEOUT_SECONDS = 120
+DOWNLOAD_RETRY_COUNT = 4
 APP_WINDOW_TITLE = "GetGoingFast.pro - Piper 1 Model Manager"
 APP_DIALOG_TITLE = "GetGoingFast.pro"
 APP_HEADER_TITLE = "GetGoingFast.pro : Piper 1 Model Manager"
@@ -232,6 +234,63 @@ def local_file_matches_metadata(local_path: Path, file_info: dict) -> bool:
             return False
 
     return actual_size > 0
+
+
+def verify_downloaded_file(path: Path, remote_path: str, file_info: dict) -> None:
+    expected_size = int(file_info.get("size_bytes", 0) or 0)
+    actual_size = path.stat().st_size
+    if expected_size > 0 and actual_size != expected_size:
+        raise RuntimeError(
+            f"Downloaded {Path(remote_path).name} with the wrong size "
+            f"({actual_size} bytes, expected {expected_size})."
+        )
+
+    expected_md5 = str(file_info.get("md5_digest", "")).strip().lower()
+    if expected_md5:
+        actual_md5 = file_md5(path).lower()
+        if actual_md5 != expected_md5:
+            raise RuntimeError(
+                f"Downloaded {Path(remote_path).name} but the checksum did not match."
+            )
+
+
+def download_and_verify_file(remote_path: str, local_path: Path, file_info: dict) -> None:
+    url = remote_file_url(remote_path)
+    temp_path = local_path.with_suffix(local_path.suffix + ".part")
+    last_error: Exception | None = None
+
+    for attempt in range(1, DOWNLOAD_RETRY_COUNT + 1):
+        try:
+            if temp_path.exists():
+                temp_path.unlink()
+
+            with urllib.request.urlopen(
+                url, timeout=DOWNLOAD_TIMEOUT_SECONDS
+            ) as response, open(temp_path, "wb") as output_file:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    output_file.write(chunk)
+
+            verify_downloaded_file(temp_path, remote_path, file_info)
+            os.replace(temp_path, local_path)
+            return
+        except urllib.error.HTTPError:
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
+        except Exception as exc:
+            last_error = exc
+            if temp_path.exists():
+                temp_path.unlink()
+            if attempt < DOWNLOAD_RETRY_COUNT:
+                time.sleep(min(2 * attempt, 8))
+
+    raise RuntimeError(
+        f"Could not download a complete copy of {Path(remote_path).name} "
+        f"after {DOWNLOAD_RETRY_COUNT} attempts. Last error: {last_error}"
+    ) from last_error
 
 
 def voice_is_installed(voice: dict) -> bool:
@@ -1118,42 +1177,15 @@ class PiperManagerApp:
         voice = self.catalog[voice_key]
 
         def task() -> str:
-            for remote_path, local_path, expected_size in voice_file_map(voice):
+            for remote_path, local_path, _expected_size in voice_file_map(voice):
                 file_info = voice["files"][remote_path]
                 if local_file_matches_metadata(local_path, file_info) and not force:
                     continue
 
                 local_path.parent.mkdir(parents=True, exist_ok=True)
-                url = remote_file_url(remote_path)
-                temp_path = local_path.with_suffix(local_path.suffix + ".part")
                 try:
-                    if temp_path.exists():
-                        temp_path.unlink()
-                    with urllib.request.urlopen(
-                        url, timeout=REMOTE_TIMEOUT_SECONDS
-                    ) as response, open(temp_path, "wb") as output_file:
-                        while True:
-                            chunk = response.read(1024 * 1024)
-                            if not chunk:
-                                break
-                            output_file.write(chunk)
-                    actual_size = temp_path.stat().st_size
-                    if expected_size > 0 and actual_size != expected_size:
-                        raise RuntimeError(
-                            f"Downloaded {Path(remote_path).name} with the wrong size "
-                            f"({actual_size} bytes, expected {expected_size})."
-                        )
-                    expected_md5 = str(file_info.get("md5_digest", "")).strip().lower()
-                    if expected_md5:
-                        actual_md5 = file_md5(temp_path).lower()
-                        if actual_md5 != expected_md5:
-                            raise RuntimeError(
-                                f"Downloaded {Path(remote_path).name} but the checksum did not match."
-                            )
-                    os.replace(temp_path, local_path)
+                    download_and_verify_file(remote_path, local_path, file_info)
                 except urllib.error.HTTPError as exc:
-                    if temp_path.exists():
-                        temp_path.unlink()
                     update_voice_availability_cache(
                         voice_key,
                         voice,
@@ -1165,8 +1197,6 @@ class PiperManagerApp:
                         "The app has hidden it from the catalog for future refreshes."
                     ) from exc
                 except Exception:
-                    if temp_path.exists():
-                        temp_path.unlink()
                     if local_path.exists() and not local_file_matches_metadata(local_path, file_info):
                         local_path.unlink()
                     raise
