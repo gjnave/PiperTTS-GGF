@@ -1,28 +1,32 @@
 # PiperTTS-GGF
 
-This repository contains the custom Piper manager code that sits on top of the upstream `piper1-gpl` project.
+`PiperTTS-GGF` is a runnable Piper repository that includes:
 
-## What lives here
+- the upstream `piper1-gpl` source tree
+- the custom `manager_app` GUI
+- the terminal-only local API server launcher in `manager_app/server_only.py`
 
-- `payload/manager_app/main.py`
-  - The GUI manager, model browser, downloader, synthesis UI, and embedded local API server support.
-- `payload/manager_app/server_only.py`
-  - The terminal-only API server launcher that runs without the GUI.
+## Main app files
 
-## What does not live here
+- `manager_app/main.py`
+- `manager_app/server_only.py`
 
-- The upstream Piper source tree
-- The wrapper `install.bat`
-- The wrapper `run-piper1-manager.bat`
-- The wrapper `run-piper1-api-server.bat`
+## Install model
 
-Those wrapper files are meant to ship in a small release ZIP. The installer can then clone:
+This repository is intended to be cloned directly by the public wrapper installer.
 
-1. `OHF-Voice/piper1-gpl`
-2. this repository
+The wrapper:
 
-After that, it can copy `payload/manager_app` into the cloned Piper repo and run everything from there.
+1. clones `PiperTTS-GGF`
+2. creates `.venv` inside this repo
+3. installs Piper from this repo
+4. runs the GUI or API server from this repo
 
-## Current payload path
+There is no separate payload copy step anymore.
 
-The files in `payload/manager_app` are the app-owned files that should be treated as the reusable source of truth for the manager.
+## Branding
+
+The GUI is branded for:
+
+- `GetGoingFast.pro`
+- `https://www.youtube.com/@cognibuild`
